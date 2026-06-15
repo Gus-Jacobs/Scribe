@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": [
+    "src/**/*",
+    "webpack.renderer.config.ts",
+    "webpack.rules.ts",
+    "webpack.plugins.ts",
+    "webpack.main.config.ts",
+    "forge.config.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

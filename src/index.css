@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Smooth transitions for theme/background changes */
+html, body, .page {
+  transition: background-color 220ms ease, color 220ms ease, box-shadow 220ms ease;
+}
+
+/* Toolbar helper */
+.toolbar {
+  @apply flex items-center justify-between px-4 py-2 bg-white dark:bg-gray-800;
+}
+
+@layer components {
+    .page {
+        @apply bg-white shadow-lg;
+        width: 8.5in;
+        min-height: 11in;
+        padding: 1in;
+        margin: 1rem auto;
+    }
+
+    .dark .page {
+        @apply bg-gray-800 text-gray-200;
+    }
+
+    .striped-table tr:nth-child(even) {
+        @apply bg-gray-100;
+    }
+
+    .dark .striped-table tr:nth-child(even) {
+        @apply bg-gray-700;
+    }
+}
+
+
+@media print {
+  body {
+    background-color: white;
+  }
+  .page {
+    width: 100%;
+    min-height: unset;
+    margin: 0;
+    padding: 0.5in;
+    box-shadow: none;
+    border: none;
+  }
+  .printable, .printable * {
+    visibility: visible;
+  }
+  .printable {
+    position: static;
+  }
+  body * {
+    visibility: hidden;
+  }
+}
