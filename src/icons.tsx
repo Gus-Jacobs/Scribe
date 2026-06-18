@@ -5,7 +5,7 @@ import {
   Indent, Outdent, Image, Minus, Save, SaveAll, FolderOpen, Undo, Redo,
   Superscript, Subscript, Table, Book, FileText, FileSignature, Search,
   File, Printer, FileUp, X, Share2, Info, Sigma,
-  Eraser, CaseSensitive, Text, Scissors, Copy, ClipboardPaste, Settings, FilePlus, MessageSquare, RefreshCw,
+  Eraser, CaseSensitive, Text, Scissors, Copy, ClipboardPaste, Settings, FilePlus, MessageSquare, RefreshCw, HandHeart,
   Palette, PaintBucket, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Square, Circle, Triangle,
   Star, Heart, Fan, Hand, Smile, Laugh, Frown, Angry, ThumbsUp, ThumbsDown,
   Cloud, Sun, Moon, CloudDrizzle, CloudLightning, CloudRain, CloudSnow, Sunset, Wind,
@@ -53,6 +53,7 @@ export const SaveAsIcon = () => <SaveAll />;
 export const SymbolIcon = () => <Sigma />;
 export const ContactIcon = () => <MessageSquare />;
 export const UpdateIcon = () => <RefreshCw />;
+export const DonateIcon = () => <HandHeart />;
 export const PrintIcon = () => <Printer />;
 export const ExportIcon = () => <FileUp />;
 export const CloseIcon = () => <X />;

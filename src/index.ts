@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, session, Menu, autoUpdater, IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, session, shell, Menu, autoUpdater, IpcMainInvokeEvent } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
@@ -369,6 +369,15 @@ ipcMain.handle('open-image-dialog', async event => {
     console.error('Image dialog error:', error);
     return null;
   }
+});
+
+// --- Open external links (donation link, etc.) in the user's browser ---
+ipcMain.handle('open-external', (_event, url: string) => {
+  if (typeof url === 'string' && /^https:\/\//i.test(url)) {
+    shell.openExternal(url);
+    return { success: true };
+  }
+  return { success: false };
 });
 
 // --- App info (version/platform, surfaced in the contact form + About) ---

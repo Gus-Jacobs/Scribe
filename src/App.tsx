@@ -27,7 +27,7 @@ import {
     SuperscriptIcon, SubscriptIcon, TableIcon, TocIcon, FootnoteIcon, CitationIcon, ShapesIcon, FindIcon,
     NewIcon, SaveAsIcon, PrintIcon, ExportIcon, CloseIcon, ShareIcon, InfoIcon, ClearFormattingIcon,
     IncreaseFontSizeIcon, DecreaseFontSizeIcon, CutIcon, CopyIcon, PasteIcon, SettingsIcon, TemplateIcon,
-    SymbolIcon, ContactIcon, UpdateIcon, iconList
+    SymbolIcon, ContactIcon, UpdateIcon, DonateIcon, iconList
 } from './icons';
 
 // Unicode glyphs inserted as REAL text — unlike the Lucide SVG icons, these
@@ -100,6 +100,7 @@ const Icon = ({ icon }: { icon: string }) => {
         symbol: <SymbolIcon />,
         contact: <ContactIcon />,
         update: <UpdateIcon />,
+        donate: <DonateIcon />,
         insert_row: <Plus />,
         delete_row: <Trash />,
         insert_col: <Columns />,
@@ -2160,6 +2161,61 @@ const FastTooltip = () => {
     );
 };
 
+const DONATE_URL = 'https://buy.stripe.com/8x2aEWa7w0Vh0SUdte6oo01';
+
+// A tip-jar nudge: animates open on launch (icon → "Donate" → icon), re-opens on
+// hover, and opens a gentle ask before sending the user to Stripe.
+const DonateButton = () => {
+    const [showModal, setShowModal] = useState(false);
+    const [expanded, setExpanded] = useState(false);
+
+    useEffect(() => {
+        const openT = window.setTimeout(() => setExpanded(true), 900);
+        const closeT = window.setTimeout(() => setExpanded(false), 3800);
+        return () => { window.clearTimeout(openT); window.clearTimeout(closeT); };
+    }, []);
+
+    const donate = () => {
+        window.api.openExternal(DONATE_URL).catch(() => { /* main unavailable */ });
+        setShowModal(false);
+    };
+
+    return (
+        <>
+            <button
+                title="Support Scribe"
+                aria-label="Support Scribe"
+                onMouseEnter={() => setExpanded(true)}
+                onMouseLeave={() => setExpanded(false)}
+                onClick={() => setShowModal(true)}
+                className="flex items-center rounded-full px-2 py-2 text-pink-600 dark:text-pink-400 bg-pink-500/10 hover:bg-pink-500/20 transition-colors"
+            >
+                <DonateIcon />
+                <span className={`overflow-hidden whitespace-nowrap text-sm font-medium transition-all duration-300 ease-out ${expanded ? 'max-w-[72px] ml-1.5 opacity-100' : 'max-w-0 opacity-0'}`}>
+                    Donate
+                </span>
+            </button>
+            {showModal && (
+                <Modal onClose={() => setShowModal(false)}>
+                    <div className="flex items-center gap-2">
+                        <span className="text-2xl">💛</span>
+                        <h2 className="text-lg font-bold">Support Scribe</h2>
+                    </div>
+                    <p className="my-3 text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
+                        Free apps still cost us money and time to build. Show some appreciation and love for our
+                        time with a small donation. We carry on the love by donating 10% of all company profits to
+                        charities.
+                    </p>
+                    <div className="flex justify-end gap-2 mt-4">
+                        <button onClick={() => setShowModal(false)} className="px-4 py-2 rounded bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500">Eh, nevermind</button>
+                        <button onClick={donate} className="px-4 py-2 rounded bg-pink-500 text-white hover:bg-pink-600 font-medium">Donate now</button>
+                    </div>
+                </Modal>
+            )}
+        </>
+    );
+};
+
 const BLANK_DOC: Descendant[] = [{ type: 'paragraph', children: [{ text: '' }] }];
 
 // --- Main App Component ---
@@ -2398,6 +2454,7 @@ const App = () => {
                             <RibbonTab title="References" active={activeTab === 'References'} onClick={() => setActiveTab('References')} />
                         </div>
                             <div className="p-2 flex items-center space-x-2">
+                                <DonateButton />
                                 <button title="Toggle Theme" onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700" aria-label="Toggle theme">
                                     {theme === 'dark' ? '🌙' : '☀️'}
                                 </button>

@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('api', {
   writeText: (text: string) => clipboard.writeText(text),
 
   // App + updates
+  openExternal: (url: string) => ipcRenderer.invoke('open-external', url),
   getAppInfo: () => ipcRenderer.invoke('get-app-info'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   restartToUpdate: () => ipcRenderer.invoke('restart-to-update'),

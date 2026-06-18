@@ -32,6 +32,7 @@ export interface IElectronAPI {
   exportPdf: (content: unknown[]) => Promise<FileResult>;
   openImageDialog: () => Promise<string | null>;
   writeText: (text: string) => void;
+  openExternal: (url: string) => Promise<{ success: boolean }>;
   getAppInfo: () => Promise<AppInfo>;
   checkForUpdates: () => Promise<{ supported: boolean; reason?: string }>;
   restartToUpdate: () => Promise<{ success: boolean }>;
