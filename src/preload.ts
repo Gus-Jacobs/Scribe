@@ -11,4 +11,15 @@ contextBridge.exposeInMainWorld('api', {
   exportPdf: (content: unknown[]) => ipcRenderer.invoke('export-pdf', { content }),
   openImageDialog: () => ipcRenderer.invoke('open-image-dialog'),
   writeText: (text: string) => clipboard.writeText(text),
+
+  // App + updates
+  getAppInfo: () => ipcRenderer.invoke('get-app-info'),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  restartToUpdate: () => ipcRenderer.invoke('restart-to-update'),
+  onUpdateStatus: (callback: (data: { status: string; detail?: string }) => void) => {
+    const listener = (_event: unknown, data: { status: string; detail?: string }) => callback(data);
+    ipcRenderer.on('update-status', listener);
+    // Return an unsubscribe so the renderer can clean up.
+    return () => ipcRenderer.removeListener('update-status', listener);
+  },
 });

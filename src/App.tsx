@@ -14,7 +14,7 @@ import FloatingToolbar from './editor/FloatingToolbar';
 import TableToolbar from './editor/TableToolbar';
 import {
     toggleMark, isMarkActive, addMarkData, toggleBlock, isBlockActive,
-    isLinkActive, unwrapLink, wrapLink, LIST_TYPES, TEXT_ALIGN_TYPES,
+    isLinkActive, unwrapLink, wrapLink, insertLink, LIST_TYPES, TEXT_ALIGN_TYPES,
 } from './editor/formatting';
 import {
     insertRow as insertTableRow, deleteRow as deleteTableRow,
@@ -27,8 +27,19 @@ import {
     SuperscriptIcon, SubscriptIcon, TableIcon, TocIcon, FootnoteIcon, CitationIcon, ShapesIcon, FindIcon,
     NewIcon, SaveAsIcon, PrintIcon, ExportIcon, CloseIcon, ShareIcon, InfoIcon, ClearFormattingIcon,
     IncreaseFontSizeIcon, DecreaseFontSizeIcon, CutIcon, CopyIcon, PasteIcon, SettingsIcon, TemplateIcon,
-    iconList
+    SymbolIcon, ContactIcon, UpdateIcon, iconList
 } from './icons';
+
+// Unicode glyphs inserted as REAL text — unlike the Lucide SVG icons, these
+// export natively into Word/PDF/ODT and stay searchable/selectable.
+const SYMBOL_GROUPS: Record<string, string[]> = {
+    Common: ['™', '®', '©', '℠', '°', '§', '¶', '†', '‡', '•', '·', '…', '–', '—', '★', '☆', '✓', '✔', '✗', '✘', '☑', '☐'],
+    Math: ['×', '÷', '±', '∓', '≈', '≠', '≡', '≤', '≥', '∞', '√', '∑', '∏', '∫', '∂', '∆', '∇', 'π', 'µ', 'Ω', '∈', '∉', '⊂', '⊃', '∪', '∩', '∀', '∃', '∝', '∴', '′', '″', '½', '¼', '¾'],
+    Arrows: ['←', '→', '↑', '↓', '↔', '↕', '⇐', '⇒', '⇔', '⇄', '↩', '↪', '⤴', '⤵', '➜', '➤', '»', '«'],
+    Currency: ['$', '€', '£', '¥', '¢', '₹', '₽', '₩', '₿', '₪', '₱', '¤'],
+    Greek: ['α', 'β', 'γ', 'δ', 'ε', 'θ', 'λ', 'μ', 'π', 'ρ', 'σ', 'τ', 'φ', 'χ', 'ψ', 'ω', 'Γ', 'Δ', 'Θ', 'Λ', 'Π', 'Σ', 'Φ', 'Ψ', 'Ω'],
+    Emoji: ['😀', '😃', '😄', '😁', '😆', '😅', '😂', '🙂', '😉', '😊', '😍', '😎', '🤔', '😴', '👍', '👎', '👏', '🙏', '💪', '🔥', '⭐', '❤️', '💡', '📌', '📎', '✅', '❌', '⚠️', '📈', '📉', '🎯', '🚀'],
+};
 
 // --- Constants ---
 const FONT_FACES = ['Arial', 'Baskerville', 'Courier New', 'Futura', 'Garamond', 'Georgia', 'Gill Sans', 'Helvetica', 'Palatino', 'Times New Roman', 'Verdana', 'American Typewriter', 'Andale Mono', 'Apple Chancery', 'Bradley Hand', 'Brush Script MT', 'Comic Sans MS', 'Didot', 'Herculanum', 'Impact', 'Jazz LET', 'Marker Felt', 'Papyrus', 'Zapfino'];
@@ -86,6 +97,9 @@ const Icon = ({ icon }: { icon: string }) => {
         paste: <PasteIcon />,
         settings: <SettingsIcon />,
         template: <TemplateIcon />,
+        symbol: <SymbolIcon />,
+        contact: <ContactIcon />,
+        update: <UpdateIcon />,
         insert_row: <Plus />,
         delete_row: <Trash />,
         insert_col: <Columns />,
@@ -159,8 +173,15 @@ const withPlugins = (editor: Editor) => {
         }
 
         if (SlateElement.isElement(node) && node.type === 'footnote') {
+            // A footnote is an inline void; if its block is the document's last,
+            // append a trailing paragraph at the END (never at the live caret) so
+            // the cursor can escape past the marker without corrupting the tree.
             if (editor.children.length - 1 === path[0]) {
-                Transforms.insertNodes(editor, { type: 'paragraph', children: [{ text: '' }] });
+                Transforms.insertNodes(
+                    editor,
+                    { type: 'paragraph', children: [{ text: '' }] },
+                    { at: [editor.children.length] }
+                );
             }
         }
 
@@ -239,49 +260,53 @@ const insertTable = (editor: Editor) => {
     Transforms.insertNodes(editor, table);
 };
 
-// THE FIX: Footnotes teleport to the bottom!
+// Footnotes drop a superscript marker at the caret and append matching content
+// to a footnote section at the bottom of the document. The container is always
+// created WITH its first content child in a single insert — an element with an
+// empty `children: []` array is invalid and used to crash Slate's normalizer.
 const insertFootnote = (editor: Editor) => {
-    const footnotes = Array.from(Editor.nodes(editor, { at: [], match: n => SlateElement.isElement(n) && n.type === 'footnote' }));
-    const footnoteNumber = footnotes.length + 1;
+    try {
+        if (!editor.selection) Transforms.select(editor, Editor.end(editor, []));
 
-    const footnote: CustomElement = { 
-        type: 'footnote', 
-        number: footnoteNumber, 
-        children: [{ text: '' }] 
-    };
-    Transforms.insertNodes(editor, footnote);
+        const footnotes = Array.from(
+            Editor.nodes(editor, { at: [], match: n => SlateElement.isElement(n) && n.type === 'footnote' })
+        );
+        const footnoteNumber = footnotes.length + 1;
 
-    let footnoteContainerPath = null;
-    for (const [node, path] of Editor.nodes(editor, { at: [], match: n => SlateElement.isElement(n) && n.type === 'footnote-container' })) {
-        footnoteContainerPath = path;
-        break;
-    }
+        Transforms.insertNodes(editor, {
+            type: 'footnote',
+            number: footnoteNumber,
+            children: [{ text: '' }],
+        } as CustomElement);
 
-    if (!footnoteContainerPath) {
-        const newContainer: CustomElement = { type: 'footnote-container', children: [] };
-        Transforms.insertNodes(editor, newContainer, { at: [editor.children.length] });
-        footnoteContainerPath = [editor.children.length - 1];
-    }
+        const footnoteContent: CustomElement = {
+            type: 'footnote-content',
+            number: footnoteNumber,
+            children: [{ text: ' ' }],
+        };
 
-    const footnoteContent: CustomElement = { 
-        type: 'footnote-content', 
-        number: footnoteNumber, 
-        children: [{ text: ' ' }] 
-    };
-    const containerNode = Node.get(editor, footnoteContainerPath) as SlateElement;
-    const insertPath = [...footnoteContainerPath, containerNode.children.length];
-    
-    Transforms.insertNodes(editor, footnoteContent, { at: insertPath });
-    Transforms.select(editor, insertPath);
-    ReactEditor.focus(editor);
-};
+        let containerEntry: [Node, number[]] | null = null;
+        for (const entry of Editor.nodes(editor, {
+            at: [],
+            match: n => SlateElement.isElement(n) && n.type === 'footnote-container',
+        })) {
+            containerEntry = entry as [Node, number[]];
+            break;
+        }
 
-// THE FIX: Interactive Citation prompt
-const insertCitation = (editor: Editor) => { 
-    const source = window.prompt("Enter citation source (e.g., Smith, 2026):");
-    if (source) {
-        const citation: CustomElement = { type: 'citation', children: [{ text: source }] }; 
-        Transforms.insertNodes(editor, citation); 
+        if (!containerEntry) {
+            Transforms.insertNodes(
+                editor,
+                { type: 'footnote-container', children: [footnoteContent] } as CustomElement,
+                { at: [editor.children.length] }
+            );
+        } else {
+            const [containerNode, containerPath] = containerEntry;
+            const insertPath = [...containerPath, (containerNode as SlateElement).children.length];
+            Transforms.insertNodes(editor, footnoteContent, { at: insertPath });
+        }
+    } catch (err) {
+        console.error('Failed to insert footnote', err);
     }
 };
 
@@ -302,39 +327,70 @@ const insertIcon = (editor: Editor, iconName: string) => {
     Transforms.insertNodes(editor, iconNode);
 };
 
-// --- The Master HTML Import Deserializer (Built like a tank) ---
+// --- The Master HTML Import Deserializer ---
+// Drives every html-import path: .md, .html, and the Pandoc formats (.odt,
+// .rtf, .epub, .tex). It must understand tables, styled spans, code, and
+// alignment — otherwise tables collapse into flat strings and formatting is
+// stripped on import (the original bugs in the QA report).
+
+const INLINE_TYPES = new Set(['link', 'footnote', 'citation', 'icon']);
+const isImportInline = (n: any): boolean => !!n && (n.text !== undefined || INLINE_TYPES.has(n.type));
+
+// Group a mixed run of inline + block children into all-block children
+// (wrapping stray inline runs in paragraphs) so Slate never sees a block and
+// inline as siblings.
+const ensureImportBlocks = (kids: any[]): any[] => {
+    const blocks: any[] = [];
+    let currentInline: any[] = [];
+    const flush = () => {
+        if (currentInline.length > 0) {
+            blocks.push({ type: 'paragraph', children: currentInline });
+            currentInline = [];
+        }
+    };
+    kids.forEach(child => {
+        if (isImportInline(child)) currentInline.push(child);
+        else { flush(); blocks.push(child); }
+    });
+    flush();
+    return blocks.length > 0 ? blocks : [{ type: 'paragraph', children: [{ text: '' }] }];
+};
+
 const deserializeHtml = (el: any, markAttributes: any = {}): any => {
     if (el.nodeType === 3) {
         const text = el.textContent.replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ');
-        if (text === '') return null; 
-        return { text: text, ...markAttributes };
-    } else if (el.nodeType !== 1) {
-        return null; 
+        if (text === '') return null;
+        return { text, ...markAttributes };
     }
+    if (el.nodeType !== 1) return null;
 
     const nodeAttributes: any = { ...markAttributes };
     const nodeName = el.nodeName.toUpperCase();
 
     if (['STRONG', 'B'].includes(nodeName)) nodeAttributes.bold = true;
     if (['EM', 'I'].includes(nodeName)) nodeAttributes.italic = true;
-    if (['U'].includes(nodeName)) nodeAttributes.underline = true;
+    if (['U', 'INS'].includes(nodeName)) nodeAttributes.underline = true;
     if (['S', 'STRIKE', 'DEL'].includes(nodeName)) nodeAttributes.strikethrough = true;
-    if (nodeName === 'CODE') nodeAttributes.code = true;
+    if (nodeName === 'CODE' || nodeName === 'PRE' || nodeName === 'TT' || nodeName === 'KBD' || nodeName === 'SAMP') nodeAttributes.code = true;
     if (nodeName === 'SUP') nodeAttributes.superscript = true;
     if (nodeName === 'SUB') nodeAttributes.subscript = true;
 
-    if (el.style) {
-        if (el.style.fontWeight === 'bold' || parseInt(el.style.fontWeight) >= 600) nodeAttributes.bold = true;
-        if (el.style.fontStyle === 'italic') nodeAttributes.italic = true;
-        if (el.style.textDecoration.includes('underline')) nodeAttributes.underline = true;
-        if (el.style.textDecoration.includes('line-through')) nodeAttributes.strikethrough = true;
-        if (el.style.color) nodeAttributes.color = el.style.color;
-        if (el.style.backgroundColor) nodeAttributes.backgroundColor = el.style.backgroundColor;
-        if (el.style.fontFamily) nodeAttributes.fontFamily = el.style.fontFamily.replace(/['"]/g, '');
-        if (el.style.fontSize) {
-            const sizeMatch = el.style.fontSize.match(/(\d+)/);
+    const style = el.style;
+    if (style) {
+        if (style.fontWeight === 'bold' || parseInt(style.fontWeight) >= 600) nodeAttributes.bold = true;
+        if (style.fontStyle === 'italic') nodeAttributes.italic = true;
+        const decoration = `${style.textDecoration || ''} ${style.textDecorationLine || ''}`;
+        if (decoration.includes('underline')) nodeAttributes.underline = true;
+        if (decoration.includes('line-through')) nodeAttributes.strikethrough = true;
+        if (style.color) nodeAttributes.color = style.color;
+        if (style.backgroundColor) nodeAttributes.backgroundColor = style.backgroundColor;
+        if (style.fontFamily) nodeAttributes.fontFamily = style.fontFamily.replace(/['"]/g, '');
+        if (style.fontSize) {
+            const sizeMatch = style.fontSize.match(/(\d+)/);
             if (sizeMatch) nodeAttributes.fontSize = parseInt(sizeMatch[1]);
         }
+        if (style.verticalAlign === 'super') nodeAttributes.superscript = true;
+        if (style.verticalAlign === 'sub') nodeAttributes.subscript = true;
     }
 
     let children = Array.from(el.childNodes)
@@ -344,46 +400,121 @@ const deserializeHtml = (el: any, markAttributes: any = {}): any => {
 
     if (children.length === 0) children = [{ text: '' }];
 
-    const ensureBlocks = (kids: any[]) => {
-        const blocks: any[] = [];
-        let currentInline: any[] = [];
-        kids.forEach(child => {
-            if (child.text !== undefined || child.type === 'link' || child.type === 'icon') {
-                currentInline.push(child);
-            } else {
-                if (currentInline.length > 0) {
-                    blocks.push({ type: 'paragraph', children: currentInline });
-                    currentInline = [];
-                }
-                blocks.push(child);
-            }
-        });
-        if (currentInline.length > 0) blocks.push({ type: 'paragraph', children: currentInline });
-        return blocks.length > 0 ? blocks : [{ type: 'paragraph', children: [{ text: '' }] }];
-    };
+    // Block-level layout props pulled from inline CSS (Pandoc/HTML emit these).
+    const blockProps: any = {};
+    if (style) {
+        if (['left', 'center', 'right', 'justify'].includes(style.textAlign)) blockProps.align = style.textAlign;
+        const lh = parseFloat(style.lineHeight);
+        if (!isNaN(lh) && lh > 0 && lh < 10) blockProps.lineHeight = lh;
+    }
 
     switch (nodeName) {
-        case 'BODY': return ensureBlocks(children);
-        case 'DIV': return ensureBlocks(children);
-        case 'P': 
-            const align = el.style?.textAlign;
-            return { type: 'paragraph', align: align || undefined, children };
-        case 'H1': return { type: 'heading-one', children };
-        case 'H2': return { type: 'heading-two', children };
-        case 'H3': 
-        case 'H4': 
-        case 'H5': 
-        case 'H6': return { type: 'heading-three', children };
-        case 'BLOCKQUOTE': return { type: 'block-quote', children };
-        case 'UL': return { type: 'bulleted-list', children };
-        case 'OL': return { type: 'numbered-list', children };
+        case 'BODY':
+        case 'DIV':
+        case 'ARTICLE':
+        case 'SECTION':
+        case 'MAIN':
+        case 'HEADER':
+        case 'FOOTER':
+            return ensureImportBlocks(children);
+        case 'P': return { type: 'paragraph', ...blockProps, children };
+        case 'H1': return { type: 'heading-one', ...blockProps, children };
+        case 'H2': return { type: 'heading-two', ...blockProps, children };
+        case 'H3':
+        case 'H4':
+        case 'H5':
+        case 'H6': return { type: 'heading-three', ...blockProps, children };
+        case 'BLOCKQUOTE': {
+            // Flatten any wrapping <p> (Pandoc nests quote text) so the quote
+            // stays a single inline-content block, not a block-in-block.
+            const inlineKids: any[] = [];
+            children.forEach(c => {
+                if (isImportInline(c)) inlineKids.push(c);
+                else if (c.children) inlineKids.push(...c.children);
+            });
+            return { type: 'block-quote', ...blockProps, children: inlineKids.length > 0 ? inlineKids : [{ text: '' }] };
+        }
+        case 'PRE': return { type: 'paragraph', children };
+        case 'UL':
+        case 'OL': {
+            const items = children.filter((c: any) => c && c.type === 'list-item');
+            if (items.length === 0) return null;
+            return { type: nodeName === 'UL' ? 'bulleted-list' : 'numbered-list', children: items };
+        }
         case 'LI': return { type: 'list-item', children };
-        case 'A': return { type: 'link', url: el.getAttribute('href'), children };
-        case 'IMG': return { type: 'image', url: el.getAttribute('src'), children: [{ text: '' }] };
-        case 'HR': return { type: 'horizontal-rule', children: [{ text: '' }] };
+        case 'A': {
+            const texts = children.filter((c: any) => c.text !== undefined || c.type === 'icon');
+            return { type: 'link', url: el.getAttribute('href') || '#', children: texts.length > 0 ? texts : [{ text: el.getAttribute('href') || '' }] };
+        }
+        case 'IMG': {
+            const src = el.getAttribute('src');
+            if (!src) return null;
+            const width = parseInt(el.getAttribute('width') || '', 10);
+            const height = parseInt(el.getAttribute('height') || '', 10);
+            return {
+                type: 'image',
+                url: src,
+                ...(width > 0 ? { width } : {}),
+                ...(height > 0 ? { height } : {}),
+                children: [{ text: '' }],
+            };
+        }
+        case 'HR':
+            return {
+                type: (el.getAttribute('class') || '').includes('page-break') ? 'page-break' : 'horizontal-rule',
+                children: [{ text: '' }],
+            };
+        case 'BR': return { text: '\n', ...nodeAttributes };
+        case 'TABLE': {
+            const rows = children.filter((c: any) => c && c.type === 'table-row');
+            return rows.length > 0 ? { type: 'table', children: rows } : ensureImportBlocks(children);
+        }
+        case 'THEAD':
+        case 'TBODY':
+        case 'TFOOT':
+            return children; // flattened into the parent <table>'s rows
+        case 'TR': {
+            const cells = children.filter((c: any) => c && c.type === 'table-cell');
+            return cells.length > 0 ? { type: 'table-row', children: cells } : null;
+        }
+        case 'TD':
+        case 'TH': {
+            const bg = style?.backgroundColor;
+            return {
+                type: 'table-cell',
+                ...(nodeName === 'TH' ? { header: true } : {}),
+                ...(bg ? { backgroundColor: bg } : {}),
+                children: ensureImportBlocks(children),
+            };
+        }
+        case 'CAPTION':
+        case 'COLGROUP':
+        case 'COL':
+        case 'STYLE':
+        case 'SCRIPT':
+            return null;
         default:
             return children;
     }
+};
+
+// True for light fills (so we can pick a dark, readable text color on top of
+// them). Imported tables often carry light cell shading; without this, the
+// editor's dark-mode default (white) text renders white-on-white = invisible.
+const isLightColor = (color?: string): boolean => {
+    if (!color) return false;
+    let r: number, g: number, b: number;
+    const hex = color.trim().replace('#', '');
+    if (/^[0-9a-fA-F]{6}$/.test(hex)) {
+        r = parseInt(hex.slice(0, 2), 16); g = parseInt(hex.slice(2, 4), 16); b = parseInt(hex.slice(4, 6), 16);
+    } else if (/^[0-9a-fA-F]{3}$/.test(hex)) {
+        r = parseInt(hex[0] + hex[0], 16); g = parseInt(hex[1] + hex[1], 16); b = parseInt(hex[2] + hex[2], 16);
+    } else {
+        const m = color.match(/\d+/g);
+        if (!m || m.length < 3) return false;
+        [r, g, b] = m.map(Number);
+    }
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6;
 };
 
 // --- Component Renderers ---
@@ -391,10 +522,18 @@ const Leaf = ({ attributes, children, leaf }: any) => {
     let style: React.CSSProperties = {};
     if (leaf.bold) style.fontWeight = 'bold';
     if (leaf.italic) style.fontStyle = 'italic';
-    if (leaf.underline) style.textDecoration = 'underline';
-    if (leaf.strikethrough) style.textDecoration = 'line-through';
+    // Underline and strikethrough are both text-decoration: combine them so a
+    // single text node can carry every mark at once (bold+italic+underline+strike)
+    // instead of the last-applied decoration silently overriding the other.
+    const decorations: string[] = [];
+    if (leaf.underline) decorations.push('underline');
+    if (leaf.strikethrough) decorations.push('line-through');
+    if (decorations.length) style.textDecoration = decorations.join(' ');
     if (leaf.fontFamily) style.fontFamily = leaf.fontFamily;
-    if (leaf.fontSize) style.fontSize = `${leaf.fontSize}px`;
+    // Sizes are points (what the size dropdown shows). Render in pt so the
+    // editor is WYSIWYG with the page and exports match Word exactly — using px
+    // made a "72" run export as 54pt (72px × 0.75 = 54pt).
+    if (leaf.fontSize) style.fontSize = `${leaf.fontSize}pt`;
     if (leaf.color) style.color = leaf.color;
     if (leaf.backgroundColor) style.backgroundColor = leaf.backgroundColor;
     if (leaf.superscript) style.verticalAlign = 'super';
@@ -424,10 +563,15 @@ const TableOfContentsBlock = ({ attributes, children }: any) => {
 
     return (
         <div {...attributes}>
-            <div contentEditable={false} className="p-4 my-2 bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 select-none">
-                <div className="flex items-center text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">
+            <div
+                contentEditable={false}
+                title="Auto-generated from Heading 1–3. Edit your headings to update it — the list itself is not directly editable."
+                className="p-4 my-2 bg-gray-100 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 select-none"
+            >
+                <div className="flex items-center text-xs font-semibold uppercase tracking-widest text-gray-500">
                     <List size={14} className="mr-2" /> Table of Contents
                 </div>
+                <p className="text-[11px] italic text-gray-400 mb-2">Auto-generated from Heading 1–3 · not directly editable</p>
                 {headings.length === 0 ? (
                     <p className="text-sm italic text-gray-400">Add headings (H1–H3) and they will appear here automatically.</p>
                 ) : (
@@ -493,10 +637,13 @@ const Element = (props: any) => {
                 </div>
             );
             case 'page-break':
+            // Full-bleed gutter band (breaks out past the page's 1in padding) so
+            // the break reads as the end of one sheet and the start of the next,
+            // the way Word shows a page boundary — not just a dashed line.
             return (
-                <div {...attributes} contentEditable={false} className="my-8 border-b-2 border-dashed border-gray-400 dark:border-gray-500 relative select-none">
-                    <div className="absolute inset-0 flex items-center justify-center -mt-3">
-                        <span className="bg-gray-100 dark:bg-gray-800 px-3 py-1 text-[10px] text-gray-500 uppercase tracking-widest rounded-full border border-gray-300 dark:border-gray-600">Page Break</span>
+                <div {...attributes} contentEditable={false} className="select-none my-6" style={{ marginLeft: '-1in', marginRight: '-1in' }}>
+                    <div className="h-12 bg-gray-200 dark:bg-gray-900 border-y border-gray-300 dark:border-gray-700 shadow-inner flex items-center justify-center">
+                        <span className="text-[10px] text-gray-500 uppercase tracking-widest">⤓ Page Break · new page</span>
                     </div>
                     <div style={{ display: 'none' }}>{children}</div>
                 </div>
@@ -531,7 +678,10 @@ const Element = (props: any) => {
         
         // THE FIX: Footnotes styled nicely
         case 'footnote': return <span {...attributes} contentEditable={false} className="text-blue-500 cursor-pointer mx-1" style={{ verticalAlign: 'super', fontSize: '0.75em' }}>[{element.number}]{children}</span>;
-        case 'citation': return <span {...attributes} contentEditable={false} className="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-sm">{children}</span>;
+        // Citation is an editable inline (like a link). It must NOT be
+        // contentEditable={false}: forcing a non-void inline with real text
+        // children to be non-editable desyncs Slate's selection model and throws.
+        case 'citation': return <span {...attributes} className="bg-gray-200 dark:bg-gray-700 px-2 py-0.5 rounded text-sm">{children}</span>;
         case 'footnote-container': return <div {...attributes} className="mt-8 pt-4 border-t-2 border-gray-300 dark:border-gray-600">{children}</div>;
         case 'footnote-content': return <div {...attributes} className="flex items-start mb-2"><span className="text-sm font-bold mr-2">{element.number}.</span><div className="flex-grow">{children}</div></div>;
         
@@ -545,6 +695,9 @@ const Element = (props: any) => {
                 width: cell.width,
                 backgroundColor: cell.backgroundColor,
                 fontWeight: cell.header ? 600 : undefined,
+                // Keep shaded cells readable in either theme: pick contrasting
+                // text instead of inheriting the dark-mode white default.
+                color: cell.backgroundColor ? (isLightColor(cell.backgroundColor) ? '#111827' : '#ffffff') : undefined,
             };
             return (
                 <td
@@ -688,7 +841,67 @@ const PasteButton = () => {
 }
 
 const BlockButton = ({ format, icon }: { format: any, icon: string }) => { const editor = useSlate(); return <button title={format} className={`p-2 rounded ${isBlockActive(editor, format, TEXT_ALIGN_TYPES.includes(format) ? 'align' : 'type') ? 'bg-blue-100 dark:bg-blue-900' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`} onMouseDown={event => { event.preventDefault(); toggleBlock(editor, format); }}><Icon icon={icon} /></button>; };
-const LinkButton = () => { const editor = useSlate(); return <button title="Link" className={`p-2 rounded ${isLinkActive(editor) ? 'bg-blue-100 dark:bg-blue-900' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`} onMouseDown={event => { event.preventDefault(); if (isLinkActive(editor)) { unwrapLink(editor); return; } const url = 'https://google.com'; wrapLink(editor, url); }}><Icon icon="link" /></button>; };
+const LinkButton = () => {
+    const editor = useSlate();
+    const [show, setShow] = useState(false);
+    const [url, setUrl] = useState('');
+    const [text, setText] = useState('');
+
+    const handleClick = () => {
+        // Toggle off an existing link without prompting.
+        if (isLinkActive(editor)) { unwrapLink(editor); return; }
+        const sel = editor.selection;
+        const selected = sel && !Range.isCollapsed(sel) ? Editor.string(editor, sel) : '';
+        setText(selected);
+        setUrl('');
+        setShow(true);
+    };
+
+    const submit = () => {
+        const trimmed = url.trim();
+        if (trimmed) {
+            // Default to an https:// scheme so bare "google.com" still links out.
+            const href = /^[a-z][a-z0-9+.-]*:|^#|^\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+            insertLink(editor, href, text.trim());
+        }
+        setShow(false);
+        setTimeout(() => { try { ReactEditor.focus(editor); } catch { /* not mounted */ } }, 0);
+    };
+
+    return (
+        <>
+            <button title="Link" className={`p-2 rounded ${isLinkActive(editor) ? 'bg-blue-100 dark:bg-blue-900' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`} onMouseDown={event => { event.preventDefault(); handleClick(); }}><Icon icon="link" /></button>
+            {show && (
+                <Modal onClose={() => setShow(false)}>
+                    <h2 className="text-lg font-bold mb-3">Insert Link</h2>
+                    <label className="block text-sm font-medium mb-1">URL</label>
+                    <input
+                        autoFocus
+                        type="text"
+                        value={url}
+                        placeholder="https://example.com"
+                        onChange={e => setUrl(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+                        className="w-full p-2 mb-3 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    />
+                    <label className="block text-sm font-medium mb-1">Display Text <span className="text-gray-400 font-normal">(optional)</span></label>
+                    <input
+                        type="text"
+                        value={text}
+                        placeholder="Defaults to the URL"
+                        onChange={e => setText(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+                        className="w-full p-2 mb-4 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    />
+                    <div className="flex justify-end space-x-2">
+                        <button onClick={() => setShow(false)} className="px-4 py-2 rounded bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500">Cancel</button>
+                        <button onClick={submit} disabled={!url.trim()} className="px-4 py-2 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50">Insert</button>
+                    </div>
+                </Modal>
+            )}
+        </>
+    );
+};
 const IndentButton = ({ action }: { action: 'indent' | 'outdent' }) => { const editor = useSlate(); return <button title={action} className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700`} onMouseDown={event => { event.preventDefault(); if (action === 'indent') handleIndent(editor); else handleOutdent(editor); }}><Icon icon={action} /></button>; };
 const InsertImageButton = () => {
     const editor = useSlate();
@@ -750,7 +963,47 @@ const InsertTableButton = () => { const editor = useSlate(); return <button titl
 const InsertTocButton = () => { const editor = useSlate(); return <button title="Table of Contents" className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700`} onMouseDown={event => { event.preventDefault(); generateToc(editor); }}><Icon icon="toc" /></button>; };
 const InsertHorizontalRuleButton = () => { const editor = useSlate(); return <button title="Horizontal Rule" className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700`} onMouseDown={event => { event.preventDefault(); insertHorizontalRule(editor); }}><Icon icon="horizontal_rule" /></button>; };
 const InsertFootnoteButton = () => { const editor = useSlate(); return <button title="Footnote" className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700`} onMouseDown={event => { event.preventDefault(); insertFootnote(editor); }}><Icon icon="footnote" /></button>; };
-const InsertCitationButton = () => { const editor = useSlate(); return <button title="Citation" className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700`} onMouseDown={event => { event.preventDefault(); insertCitation(editor); }}><Icon icon="citation" /></button>; };
+const InsertCitationButton = () => {
+    const editor = useSlate();
+    const [show, setShow] = useState(false);
+    const [source, setSource] = useState('');
+
+    const submit = () => {
+        const value = source.trim();
+        if (value) {
+            const citation: CustomElement = { type: 'citation', children: [{ text: value }] };
+            Transforms.insertNodes(editor, citation);
+        }
+        setSource('');
+        setShow(false);
+        setTimeout(() => { try { ReactEditor.focus(editor); } catch { /* not mounted */ } }, 0);
+    };
+
+    return (
+        <>
+            <button title="Citation" className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700`} onMouseDown={event => { event.preventDefault(); setShow(true); }}><Icon icon="citation" /></button>
+            {show && (
+                <Modal onClose={() => setShow(false)}>
+                    <h2 className="text-lg font-bold mb-3">Insert Citation</h2>
+                    <label className="block text-sm font-medium mb-1">Source</label>
+                    <input
+                        autoFocus
+                        type="text"
+                        value={source}
+                        placeholder="e.g. Smith, 2026"
+                        onChange={e => setSource(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+                        className="w-full p-2 mb-4 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    />
+                    <div className="flex justify-end space-x-2">
+                        <button onClick={() => setShow(false)} className="px-4 py-2 rounded bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500">Cancel</button>
+                        <button onClick={submit} disabled={!source.trim()} className="px-4 py-2 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50">Insert</button>
+                    </div>
+                </Modal>
+            )}
+        </>
+    );
+};
 const InsertRowButton = ({ editor }: { editor: Editor }) => {
     return <button title="Insert Row" className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700" onMouseDown={event => {
         event.preventDefault();
@@ -808,7 +1061,7 @@ const InsertIconButton = () => {
             {showModal && (
                 <Modal onClose={() => setShowModal(false)}>
                     <h2 className="text-lg font-bold">Insert Icon</h2>
-                                    <div className="mt-4">
+                                    <div className="mt-4 max-h-[60vh] overflow-y-auto pr-1">
                         {(Object.keys(iconList) as (keyof typeof iconList)[]).map(category => (
                             <div key={category}>
                                 <h3 className="text-md font-bold capitalize mt-4">{category}</h3>
@@ -820,6 +1073,47 @@ const InsertIconButton = () => {
                                             className="p-4 rounded border-2 hover:border-blue-500 flex justify-center items-center"
                                         >
                                             <span className="text-2xl">{renderIconValue(icon.icon)}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </Modal>
+            )}
+        </>
+    );
+};
+
+const InsertSymbolButton = () => {
+    const editor = useSlate();
+    const [show, setShow] = useState(false);
+
+    const insertSymbol = (char: string) => {
+        // Insert as plain text so it embeds natively in every export format.
+        try { ReactEditor.focus(editor); } catch { /* not mounted */ }
+        editor.insertText(char);
+    };
+
+    return (
+        <>
+            <button title="Symbol" className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700`} onMouseDown={event => { event.preventDefault(); setShow(true); }}><Icon icon="symbol" /></button>
+            {show && (
+                <Modal onClose={() => setShow(false)}>
+                    <h2 className="text-lg font-bold">Insert Symbol</h2>
+                    <p className="text-sm text-gray-500 mt-1">Inserted as text — saves into Word, PDF, and ODT.</p>
+                    <div className="mt-4 max-h-[60vh] overflow-y-auto pr-1">
+                        {Object.keys(SYMBOL_GROUPS).map(group => (
+                            <div key={group}>
+                                <h3 className="text-md font-bold mt-4">{group}</h3>
+                                <div className="grid grid-cols-8 gap-1 mt-2">
+                                    {SYMBOL_GROUPS[group].map((char, i) => (
+                                        <button
+                                            key={`${group}-${i}`}
+                                            onMouseDown={e => { e.preventDefault(); insertSymbol(char); }}
+                                            className="p-2 rounded border-2 border-transparent hover:border-blue-500 flex justify-center items-center text-xl"
+                                        >
+                                            {char}
                                         </button>
                                     ))}
                                 </div>
@@ -916,7 +1210,7 @@ const Modal = ({ children, onClose }: { children: React.ReactNode, onClose: () =
             className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center"
             onMouseDown={handleBackdropClick}
         >
-            <div ref={modalContentRef} className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-xl w-full max-w-md text-black dark:text-white">
+            <div ref={modalContentRef} className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-xl w-full max-w-md text-black dark:text-white max-h-[85vh] overflow-y-auto">
                 {children}
             </div>
         </div>,
@@ -926,28 +1220,142 @@ const Modal = ({ children, onClose }: { children: React.ReactNode, onClose: () =
 
 const InfoButton = () => {
     const [showModal, setShowModal] = useState(false);
+    const [info, setInfo] = useState<{ version: string; platform: string; arch: string; electron: string } | null>(null);
+    const [checking, setChecking] = useState(false);
+
+    useEffect(() => {
+        if (showModal && !info) window.api.getAppInfo().then(setInfo).catch(() => { /* unavailable */ });
+    }, [showModal, info]);
+
+    const checkUpdates = async () => {
+        setChecking(true);
+        try {
+            const result = await window.api.checkForUpdates();
+            if (!result.supported) {
+                toast(
+                    result.reason === 'dev'
+                        ? 'Updates apply to installed builds only.'
+                        : 'Automatic updates aren’t configured for this build yet.',
+                    { type: 'info' }
+                );
+            } else {
+                toast('Checking for updates…', { type: 'info' });
+            }
+        } catch {
+            toast('Could not check for updates.', { type: 'error' });
+        } finally {
+            setChecking(false);
+        }
+    };
 
     return (
         <>
-            <button title="Info" className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700`} onClick={() => setShowModal(true)}><Icon icon="info" /></button>
+            <button title="About Scribe" className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700`} onClick={() => setShowModal(true)}><Icon icon="info" /></button>
             {showModal && (
                 <Modal onClose={() => setShowModal(false)}>
-                    <h2 className="text-lg font-bold">About</h2>
-                    <p className="my-2">This is a simple word processor built with Electron, React, and Slate.js.</p>
-                    <p>Version: 1.0.0</p>
+                    <div className="flex items-center gap-2">
+                        <span className="text-2xl">✒️</span>
+                        <h2 className="text-xl font-bold">Scribe</h2>
+                    </div>
+                    <p className="my-2 text-sm text-gray-500 dark:text-gray-400">An offline-first word processor built with Electron, React, and Slate.</p>
+                    <div className="text-sm space-y-1 mt-3">
+                        <p><span className="font-medium">Version:</span> {info?.version ?? '…'}</p>
+                        {info && <p className="text-gray-500 dark:text-gray-400">{info.platform}/{info.arch} · Electron {info.electron}</p>}
+                    </div>
                     <h3 className="text-md font-bold mt-4">Quick Tips</h3>
-                    <ul className="list-disc list-inside space-y-1">
-                        <li>Use the ribbon tabs to navigate between different sets of tools.</li>
-                        <li>You can insert images, tables, and more from the "Insert" tab.</li>
+                    <ul className="list-disc list-inside space-y-1 text-sm">
+                        <li>Highlight text to bring up the floating format bar.</li>
+                        <li>Insert images, tables, symbols, and more from the Insert tab.</li>
+                        <li>Found a bug? Use Send Feedback in the File tab.</li>
                     </ul>
-                    <div className="flex justify-end mt-4">
-                        <button onClick={() => setShowModal(false)} className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300">Close</button>
+                    <div className="flex justify-between items-center mt-5">
+                        <button onClick={checkUpdates} disabled={checking} className="flex items-center gap-2 px-3 py-2 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 text-sm disabled:opacity-50">
+                            <Icon icon="update" /> {checking ? 'Checking…' : 'Check for updates'}
+                        </button>
+                        <button onClick={() => setShowModal(false)} className="px-4 py-2 rounded bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500">Close</button>
                     </div>
                 </Modal>
             )}
         </>
     );
 }
+
+const FORMSPREE_ENDPOINT = 'https://formspree.io/f/xbdevyeo';
+const CONTACT_TYPES = ['Bug report', 'Feature request', 'Question', 'Other'];
+
+const ContactButton = () => {
+    const [show, setShow] = useState(false);
+    const [type, setType] = useState(CONTACT_TYPES[0]);
+    const [email, setEmail] = useState('');
+    const [message, setMessage] = useState('');
+    const [sending, setSending] = useState(false);
+
+    const reset = () => { setType(CONTACT_TYPES[0]); setEmail(''); setMessage(''); };
+
+    const submit = async () => {
+        if (!message.trim() || sending) return;
+        setSending(true);
+        try {
+            const info = await window.api.getAppInfo().catch(() => null);
+            const res = await fetch(FORMSPREE_ENDPOINT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                body: JSON.stringify({
+                    email: email.trim() || undefined,
+                    _subject: `Scribe — ${type}`,
+                    type,
+                    message: message.trim(),
+                    appVersion: info?.version,
+                    platform: info ? `${info.platform}/${info.arch}` : undefined,
+                }),
+            });
+            if (res.ok) {
+                toast('Message sent — thank you!', { type: 'success' });
+                reset();
+                setShow(false);
+            } else {
+                const data = await res.json().catch(() => null);
+                toast(data?.errors?.[0]?.message ?? 'Could not send message. Please try again.', { type: 'error' });
+            }
+        } catch {
+            toast("Couldn't send — check your internet connection.", { type: 'error' });
+        } finally {
+            setSending(false);
+        }
+    };
+
+    return (
+        <>
+            <button title="Send Feedback" className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700`} onMouseDown={e => { e.preventDefault(); setShow(true); }}><Icon icon="contact" /></button>
+            {show && (
+                <Modal onClose={() => setShow(false)}>
+                    <h2 className="text-lg font-bold">Send Feedback</h2>
+                    <p className="text-sm text-gray-500 mt-1">Found a bug or want a feature? Tell us — it goes straight to the team.</p>
+                    <div className="mt-4 space-y-3">
+                        <div>
+                            <label className="block text-sm font-medium mb-1">Type</label>
+                            <select value={type} onChange={e => setType(e.target.value)} className="w-full p-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                                {CONTACT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium mb-1">Your email <span className="text-gray-400 font-normal">(optional, so we can reply)</span></label>
+                            <input type="email" value={email} placeholder="you@example.com" onChange={e => setEmail(e.target.value)} className="w-full p-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white" />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium mb-1">Message</label>
+                            <textarea value={message} placeholder="What happened, or what would you like to see?" rows={5} onChange={e => setMessage(e.target.value)} className="w-full p-2 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white resize-none" />
+                        </div>
+                    </div>
+                    <div className="flex justify-end space-x-2 mt-4">
+                        <button onClick={() => setShow(false)} className="px-4 py-2 rounded bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500">Cancel</button>
+                        <button onClick={submit} disabled={!message.trim() || sending} className="px-4 py-2 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50">{sending ? 'Sending…' : 'Send'}</button>
+                    </div>
+                </Modal>
+            )}
+        </>
+    );
+};
 
 const SaveButton = ({ onSave }: { onSave: () => void }) => {
     return <button title="Save" className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700`} onMouseDown={e => { e.preventDefault(); onSave(); }}><Icon icon="save" /></button>;
@@ -985,11 +1393,28 @@ const ColorPicker = ({ mark, colors }: { mark: string, colors: string[] }) => {
         <div className="flex items-center space-x-1">
             {colors.map(color => <button key={color} className="w-5 h-5 rounded-full border-2 border-transparent hover:border-gray-400" style={{ backgroundColor: color }} onMouseDown={e => { e.preventDefault(); addMarkData(editor, mark as any, color); }} />)}
             <input type="color" className="w-6 h-6" onInput={e => addMarkData(editor, mark as any, (e.target as HTMLInputElement).value)} />
+            {/* Revert to the document default by REMOVING the mark, rather than
+                stamping an explicit white that prints invisibly on export. */}
+            <button
+                title={mark === 'backgroundColor' ? 'No highlight' : 'Automatic (default) color'}
+                className="w-5 h-5 rounded-full border border-gray-400 text-[10px] leading-none flex items-center justify-center hover:bg-gray-200 dark:hover:bg-gray-600"
+                onMouseDown={e => { e.preventDefault(); Editor.removeMark(editor, mark as any); }}
+            >
+                ⌫
+            </button>
         </div>
     );
 };
 const ToolbarSection = ({ children }: { children: React.ReactNode }) => <div className="flex items-center space-x-2 p-2">{children}</div>;
-const RibbonTab = ({ title, active, onClick }: { title: string, active: boolean, onClick: () => void }) => <button onClick={onClick} className={`px-4 py-2 text-sm font-medium rounded-t-lg ${active ? 'bg-white/20' : ''} hover:bg-white/10`}>{title}</button>;
+const RibbonTab = ({ title, active, onClick }: { title: string, active: boolean, onClick: () => void }) => (
+    <button
+        onClick={onClick}
+        className={`relative px-4 py-2.5 text-sm font-medium transition-colors ${active ? 'text-blue-600 dark:text-blue-400' : 'opacity-60 hover:opacity-100'}`}
+    >
+        {title}
+        {active && <span className="absolute left-3 right-3 -bottom-px h-0.5 rounded-full bg-blue-600 dark:bg-blue-400" />}
+    </button>
+);
 const StatusBar = ({ wordCount, charCount, theme, themes, customTheme }: { wordCount: number, charCount: number, theme: string, themes: any, customTheme: any }) => {
     const style = theme === 'custom' ? { backgroundColor: customTheme.toolbar, color: customTheme.text } : {};
     const themeClasses = theme !== 'custom' ? `${themes[theme].toolbar} ${themes[theme].text}` : '';
@@ -1107,40 +1532,43 @@ const themes: Record<string, ThemeSpec> = {
         editorText: 'text-white',
         toolbar: 'bg-gray-800',
     },
+    // Colorful themes pair a bright backdrop with a frosted DARK toolbar so the
+    // ribbon's white icons/text stay readable (the old translucent-white bars
+    // had almost no contrast).
     sepia: {
-        background: 'bg-yellow-50',
+        background: 'bg-amber-50',
         text: 'text-stone-800',
-        editorBackground: 'bg-amber-100',
+        editorBackground: 'bg-amber-50',
         editorText: 'text-stone-800',
-        toolbar: 'bg-amber-100',
+        toolbar: 'bg-amber-200',
     },
     ocean: {
-        background: 'bg-gradient-to-r from-blue-400 to-teal-400',
+        background: 'bg-gradient-to-br from-sky-500 to-teal-500',
         text: 'text-white',
-        editorBackground: 'bg-white/90',
+        editorBackground: 'bg-white',
         editorText: 'text-black',
-        toolbar: 'bg-white/30',
+        toolbar: 'bg-sky-950/80',
     },
     sunset: {
-        background: 'bg-gradient-to-r from-orange-400 to-pink-500',
+        background: 'bg-gradient-to-br from-orange-500 to-pink-600',
         text: 'text-white',
-        editorBackground: 'bg-white/90',
+        editorBackground: 'bg-white',
         editorText: 'text-black',
-        toolbar: 'bg-black/20',
+        toolbar: 'bg-rose-950/80',
     },
     forest: {
-        background: 'bg-gradient-to-r from-green-400 to-lime-500',
+        background: 'bg-gradient-to-br from-emerald-500 to-lime-600',
         text: 'text-white',
-        editorBackground: 'bg-white/90',
+        editorBackground: 'bg-white',
         editorText: 'text-black',
-        toolbar: 'bg-black/20',
+        toolbar: 'bg-emerald-950/80',
     },
     lavender: {
-        background: 'bg-gradient-to-r from-purple-400 to-indigo-500',
+        background: 'bg-gradient-to-br from-violet-500 to-indigo-600',
         text: 'text-white',
-        editorBackground: 'bg-white/90',
+        editorBackground: 'bg-white',
         editorText: 'text-black',
-        toolbar: 'bg-white/30',
+        toolbar: 'bg-indigo-950/80',
     },
     custom: {
         background: '',
@@ -1608,6 +2036,130 @@ const computeStats = (nodes: Descendant[]): { wordCount: number, charCount: numb
     return { wordCount, charCount };
 };
 
+// --- Toast notifications -------------------------------------------------
+type ToastType = 'info' | 'success' | 'error';
+interface ToastAction { label: string; onClick: () => void; }
+interface ToastItem { id: number; message: string; type: ToastType; action?: ToastAction; duration: number; }
+
+const toastListeners = new Set<(t: ToastItem) => void>();
+let toastSeq = 0;
+const toast = (message: string, opts: { type?: ToastType; action?: ToastAction; duration?: number } = {}): void => {
+    const item: ToastItem = {
+        id: ++toastSeq,
+        message,
+        type: opts.type ?? 'info',
+        action: opts.action,
+        duration: opts.duration ?? 4000,
+    };
+    toastListeners.forEach(listener => listener(item));
+};
+
+const TOAST_STYLES: Record<ToastType, string> = {
+    info: 'bg-gray-900 border-gray-700',
+    success: 'bg-emerald-600 border-emerald-500',
+    error: 'bg-red-600 border-red-500',
+};
+
+const Toaster = () => {
+    const [items, setItems] = useState<ToastItem[]>([]);
+    const dismiss = useCallback((id: number) => setItems(prev => prev.filter(i => i.id !== id)), []);
+    useEffect(() => {
+        const add = (t: ToastItem) => {
+            setItems(prev => [...prev, t]);
+            if (t.duration > 0) window.setTimeout(() => dismiss(t.id), t.duration);
+        };
+        toastListeners.add(add);
+        return () => { toastListeners.delete(add); };
+    }, [dismiss]);
+
+    return ReactDOM.createPortal(
+        <div className="fixed bottom-5 right-5 z-[70] flex flex-col items-end space-y-2 print:hidden">
+            {items.map(t => (
+                <div
+                    key={t.id}
+                    className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-2xl border text-white text-sm max-w-sm animate-[fadeIn_120ms_ease-out] ${TOAST_STYLES[t.type]}`}
+                >
+                    <span className="flex-1">{t.message}</span>
+                    {t.action && (
+                        <button
+                            onClick={() => { t.action!.onClick(); dismiss(t.id); }}
+                            className="px-2 py-1 rounded bg-white/20 hover:bg-white/30 font-medium whitespace-nowrap"
+                        >
+                            {t.action.label}
+                        </button>
+                    )}
+                    <button onClick={() => dismiss(t.id)} className="text-white/70 hover:text-white" aria-label="Dismiss">✕</button>
+                </div>
+            ))}
+        </div>,
+        document.body
+    );
+};
+
+// Fast, centralized replacement for the browser's slow native `title` tooltip
+// (~500ms). Reads the `title` of any hovered element, suppresses the native
+// bubble by stashing the attribute, and shows a custom one after ~120ms.
+const FastTooltip = () => {
+    const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
+    const timer = useRef<number | null>(null);
+    const stash = useRef<{ el: HTMLElement; title: string } | null>(null);
+
+    useEffect(() => {
+        const findTitled = (start: EventTarget | null): HTMLElement | null => {
+            let el = start as HTMLElement | null;
+            while (el && el !== document.body) {
+                if (el.getAttribute && el.getAttribute('title')) return el;
+                el = el.parentElement;
+            }
+            return null;
+        };
+        const clear = () => {
+            if (timer.current) { window.clearTimeout(timer.current); timer.current = null; }
+            if (stash.current) { stash.current.el.setAttribute('title', stash.current.title); stash.current = null; }
+            setTip(null);
+        };
+        const onOver = (e: MouseEvent) => {
+            const el = findTitled(e.target);
+            if (!el) return;
+            const title = el.getAttribute('title');
+            if (!title) return;
+            stash.current = { el, title };
+            el.removeAttribute('title'); // suppress the native tooltip
+            if (timer.current) window.clearTimeout(timer.current);
+            const rect = el.getBoundingClientRect();
+            timer.current = window.setTimeout(() => {
+                setTip({ text: title, x: rect.left + rect.width / 2, y: rect.bottom + 6 });
+            }, 120);
+        };
+        const onOut = (e: MouseEvent) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            if (stash.current && !stash.current.el.contains(e.relatedTarget as any)) clear();
+        };
+        document.addEventListener('mouseover', onOver, true);
+        document.addEventListener('mouseout', onOut, true);
+        document.addEventListener('mousedown', clear, true);
+        window.addEventListener('blur', clear);
+        return () => {
+            document.removeEventListener('mouseover', onOver, true);
+            document.removeEventListener('mouseout', onOut, true);
+            document.removeEventListener('mousedown', clear, true);
+            window.removeEventListener('blur', clear);
+            clear();
+        };
+    }, []);
+
+    if (!tip) return null;
+    return ReactDOM.createPortal(
+        <div
+            className="fixed z-[60] px-2 py-1 text-xs rounded bg-gray-900 text-white shadow-lg pointer-events-none whitespace-nowrap"
+            style={{ left: tip.x, top: tip.y, transform: 'translateX(-50%)' }}
+        >
+            {tip.text}
+        </div>,
+        document.body
+    );
+};
+
 const BLANK_DOC: Descendant[] = [{ type: 'paragraph', children: [{ text: '' }] }];
 
 // --- Main App Component ---
@@ -1709,6 +2261,9 @@ const App = () => {
             }
             if (!Array.isArray(newValue) || newValue.length === 0) newValue = JSON.parse(JSON.stringify(BLANK_DOC));
             loadContent(newValue);
+            if (result.fileName?.toLowerCase().endsWith('.pdf')) {
+                toast('PDF imported (beta) — text and layout are reconstructed, so review formatting. Save As to keep it as .docx or .scribe.', { type: 'info', duration: 8000 });
+            }
         } catch (err) {
             alert(`Error parsing file content: ${(err as Error).message}`);
         }
@@ -1787,6 +2342,23 @@ const App = () => {
         return () => window.removeEventListener('keydown', handler);
     }, [editor, saveDocument, openDocument, newDocument]);
 
+    // Surface auto-update progress as toasts; the "downloaded" toast stays until
+    // the user restarts to apply it.
+    useEffect(() => {
+        if (!window.api?.onUpdateStatus) return;
+        return window.api.onUpdateStatus(({ status }) => {
+            if (status === 'available') {
+                toast('Update found — downloading in the background…', { type: 'info' });
+            } else if (status === 'downloaded') {
+                toast('A new version of Scribe is ready.', {
+                    type: 'success',
+                    duration: 0,
+                    action: { label: 'Restart now', onClick: () => window.api.restartToUpdate() },
+                });
+            }
+        });
+    }, []);
+
     const renderLeaf = useCallback((props: any) => <MemoizedLeaf {...props} />, []);
     const renderElement = useCallback((props: any) => <MemoizedElement {...props} />, []);
 
@@ -1810,6 +2382,8 @@ const App = () => {
     return (
         <Slate editor={editor} initialValue={initialValue} onChange={handleEditorChange}>
             <ErrorBoundary>
+            <Toaster />
+            <FastTooltip />
             <FloatingToolbar />
             <TableToolbar />
             <div className={`${theme !== 'custom' ? themes[theme].background : ''} ${theme !== 'custom' ? themes[theme].text : ''} min-h-screen flex flex-col`} style={mainStyle}>
@@ -1817,6 +2391,7 @@ const App = () => {
                 <div className={`print:hidden ${theme !== 'custom' ? themes[theme].toolbar : ''} shadow-md sticky top-0 z-10`} style={toolbarStyle}>
                     <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700">
                         <div className="flex items-center">
+                            <span className="pl-4 pr-3 text-lg font-bold tracking-tight select-none">✒️ Scribe</span>
                             <RibbonTab title="File" active={activeTab === 'File'} onClick={() => setActiveTab('File')} />
                             <RibbonTab title="Home" active={activeTab === 'Home'} onClick={() => setActiveTab('Home')} />
                             <RibbonTab title="Insert" active={activeTab === 'Insert'} onClick={() => setActiveTab('Insert')} />
@@ -1844,6 +2419,7 @@ const App = () => {
                                 <PrintButton />
                                 <ExportButton onExport={exportPdf} />
                                 <ShareButton editor={editor} />
+                                <ContactButton />
                                 <InfoButton />
                                 <CloseButton />
                             </ToolbarSection>
@@ -1883,6 +2459,7 @@ const App = () => {
                                 <DeleteRowButton editor={editor} />
                                 <InsertColumnButton editor={editor} />
                                 <DeleteColumnButton editor={editor} />
+                                <InsertSymbolButton />
                                 <InsertIconButton />
                             </ToolbarSection>
                         </div>
@@ -1906,7 +2483,7 @@ const App = () => {
                             }
                         }
                     `}</style>
-                    <div className={`page ${theme === 'dark' ? 'dark' : ''}`} style={editorStyle}>
+                    <div className={`page ${theme === 'dark' ? 'dark' : ''} ${theme !== 'custom' ? themes[theme].editorText : ''}`} style={editorStyle}>
                         <Editable
                             className="outline-none printable"
                             placeholder="Enter some text..."

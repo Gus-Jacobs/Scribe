@@ -20,10 +20,10 @@ import {
   isBlockActive,
   isLinkActive,
   isMarkActive,
+  insertLink,
   toggleBlock,
   toggleMark,
   unwrapLink,
-  wrapLink,
 } from './formatting';
 
 /**
@@ -64,10 +64,25 @@ const FloatingToolbar = () => {
   const inFocus = useFocused();
   const ref = useRef<HTMLDivElement>(null);
   const [highlightOpen, setHighlightOpen] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkUrl, setLinkUrl] = useState('');
+  const [linkText, setLinkText] = useState('');
+
+  const applyLink = () => {
+    const trimmed = linkUrl.trim();
+    if (trimmed) {
+      const href = /^[a-z][a-z0-9+.-]*:|^#|^\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+      insertLink(editor, href, linkText.trim());
+    }
+    setLinkOpen(false);
+  };
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    // While editing a link, keep the toolbar parked where it is — the inputs
+    // steal DOM focus (collapsing the selection) and we must not hide it.
+    if (linkOpen) return;
 
     const { selection } = editor;
     const domSelection = window.getSelection();
@@ -149,20 +164,68 @@ const FloatingToolbar = () => {
         <TextQuote size={15} />
       </ToolbarButton>
       <Divider />
-      <ToolbarButton
-        active={isLinkActive(editor)}
-        label="Link"
-        onAction={() => {
-          if (isLinkActive(editor)) {
-            unwrapLink(editor);
-            return;
-          }
-          const url = window.prompt('Link URL:', 'https://');
-          if (url) wrapLink(editor, url);
-        }}
-      >
-        <Link2 size={15} />
-      </ToolbarButton>
+      <div className="relative">
+        <ToolbarButton
+          active={linkOpen || isLinkActive(editor)}
+          label="Link"
+          onAction={() => {
+            if (isLinkActive(editor)) {
+              unwrapLink(editor);
+              return;
+            }
+            const sel = editor.selection;
+            setLinkText(sel && !Range.isCollapsed(sel) ? Editor.string(editor, sel) : '');
+            setLinkUrl('');
+            setLinkOpen(open => !open);
+          }}
+        >
+          <Link2 size={15} />
+        </ToolbarButton>
+        {linkOpen && (
+          <div
+            className="absolute top-8 left-0 z-50 flex flex-col space-y-1 p-2 rounded-lg bg-gray-900/95 border border-white/10 shadow-xl w-56"
+            // stopPropagation so the toolbar's mousedown-preventDefault does not
+            // block these inputs from receiving focus.
+            onMouseDown={event => event.stopPropagation()}
+          >
+            <input
+              autoFocus
+              value={linkUrl}
+              placeholder="https://example.com"
+              onChange={event => setLinkUrl(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') { event.preventDefault(); applyLink(); }
+                if (event.key === 'Escape') setLinkOpen(false);
+              }}
+              className="px-2 py-1 text-sm rounded bg-gray-800 text-gray-100 border border-white/10 outline-none placeholder-gray-500"
+            />
+            <input
+              value={linkText}
+              placeholder="Display text (optional)"
+              onChange={event => setLinkText(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') { event.preventDefault(); applyLink(); }
+                if (event.key === 'Escape') setLinkOpen(false);
+              }}
+              className="px-2 py-1 text-sm rounded bg-gray-800 text-gray-100 border border-white/10 outline-none placeholder-gray-500"
+            />
+            <div className="flex justify-end space-x-1">
+              <button
+                onMouseDown={event => { event.preventDefault(); setLinkOpen(false); }}
+                className="px-2 py-1 text-xs rounded text-gray-300 hover:bg-white/10"
+              >
+                Cancel
+              </button>
+              <button
+                onMouseDown={event => { event.preventDefault(); applyLink(); }}
+                className="px-2 py-1 text-xs rounded bg-blue-500 text-white hover:bg-blue-600"
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
       <div className="relative">
         <ToolbarButton
           active={highlightOpen || isMarkActive(editor, 'backgroundColor')}

@@ -21,7 +21,7 @@ import {
  * for files the native parser cannot read.
  *
  * Unit conversions (mirrors of the export pipeline):
- *   w:sz (half-points)  -> px  = sz / 1.5
+ *   w:sz (half-points)  -> pt  = sz / 2
  *   w:ind (twips)       -> indent units = twips / 600   (1 unit = 40px)
  *   w:spacing line      -> lineHeight   = line / 240
  *   wp:extent (EMU)     -> px  = emu / 9525
@@ -128,8 +128,9 @@ const marksFromRunProps = (rPr: XmlNode | undefined): Marks => {
 
   const sz = val(child(rPr, 'w:sz'));
   if (sz) {
-    const px = Math.round(parseInt(sz, 10) / 1.5);
-    if (px > 0) marks.fontSize = px;
+    // w:sz is half-points; our fontSize is whole points (sz / 2).
+    const pt = Math.round(parseInt(sz, 10) / 2);
+    if (pt > 0) marks.fontSize = pt;
   }
 
   const fonts = child(rPr, 'w:rFonts');

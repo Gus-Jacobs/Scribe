@@ -11,6 +11,18 @@ export interface OpenResult extends FileResult {
   fileType?: 'slate' | 'html-import';
 }
 
+export interface AppInfo {
+  version: string;
+  platform: string;
+  arch: string;
+  electron: string;
+}
+
+export interface UpdateStatus {
+  status: 'checking' | 'none' | 'available' | 'downloaded' | 'error' | string;
+  detail?: string;
+}
+
 export interface IElectronAPI {
   saveFile: (content: unknown[]) => Promise<FileResult>;
   saveAsFile: (content: unknown[]) => Promise<FileResult>;
@@ -20,6 +32,10 @@ export interface IElectronAPI {
   exportPdf: (content: unknown[]) => Promise<FileResult>;
   openImageDialog: () => Promise<string | null>;
   writeText: (text: string) => void;
+  getAppInfo: () => Promise<AppInfo>;
+  checkForUpdates: () => Promise<{ supported: boolean; reason?: string }>;
+  restartToUpdate: () => Promise<{ success: boolean }>;
+  onUpdateStatus: (callback: (data: UpdateStatus) => void) => () => void;
 }
 
 declare global {

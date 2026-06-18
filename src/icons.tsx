@@ -2,10 +2,10 @@ import React from 'react';
 import {
   Bold, Italic, Underline, Strikethrough, Code, Link, Quote,
   Heading1, Heading2, Heading3, ListOrdered, List, AlignLeft, AlignCenter, AlignRight, AlignJustify,
-  Indent, Outdent, Image, Minus, Save, FolderOpen, Undo, Redo,
+  Indent, Outdent, Image, Minus, Save, SaveAll, FolderOpen, Undo, Redo,
   Superscript, Subscript, Table, Book, FileText, FileSignature, Search,
-  File, Printer, FileUp, X, Share2, Info,
-  Eraser, CaseSensitive, Text, Scissors, Copy, ClipboardPaste, Settings, FilePlus,
+  File, Printer, FileUp, X, Share2, Info, Sigma,
+  Eraser, CaseSensitive, Text, Scissors, Copy, ClipboardPaste, Settings, FilePlus, MessageSquare, RefreshCw,
   Palette, PaintBucket, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Square, Circle, Triangle,
   Star, Heart, Fan, Hand, Smile, Laugh, Frown, Angry, ThumbsUp, ThumbsDown,
   Cloud, Sun, Moon, CloudDrizzle, CloudLightning, CloudRain, CloudSnow, Sunset, Wind,
@@ -49,7 +49,10 @@ export const CitationIcon = () => <FileSignature />;
 export const ShapesIcon = () => <Star />;
 export const FindIcon = () => <Search />;
 export const NewIcon = () => <File />;
-export const SaveAsIcon = () => <Save />;
+export const SaveAsIcon = () => <SaveAll />;
+export const SymbolIcon = () => <Sigma />;
+export const ContactIcon = () => <MessageSquare />;
+export const UpdateIcon = () => <RefreshCw />;
 export const PrintIcon = () => <Printer />;
 export const ExportIcon = () => <FileUp />;
 export const CloseIcon = () => <X />;

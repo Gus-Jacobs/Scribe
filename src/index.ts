@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, session, IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, session, Menu, autoUpdater, IpcMainInvokeEvent } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
@@ -6,6 +6,7 @@ import util from 'util';
 import HTMLToDOCX from '@turbodocx/html-to-docx';
 
 import { parseDocxToSlate } from './docxParser';
+import { parsePdfToSlate } from './parsers/pdfEngine';
 import { processWithPandoc } from './parsers/pandocEngine';
 import { processTextFile, processMarkdownFile, processHtmlFile } from './parsers/textEngine';
 import JSZip from 'jszip';
@@ -32,6 +33,7 @@ interface FileResult {
 // --- Document session state (single-document app) ---
 let currentFilePath: string | null = null;
 let isDirty = false;
+let mainWindow: BrowserWindow | null = null;
 
 const updateTitle = (win: BrowserWindow | null): void => {
   if (!win || win.isDestroyed()) return;
@@ -45,25 +47,31 @@ const windowFor = (event: IpcMainInvokeEvent): BrowserWindow | null =>
   BrowserWindow.fromWebContents(event.sender);
 
 const createWindow = (): void => {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1280,
     height: 860,
     minWidth: 760,
     minHeight: 480,
     title: 'Untitled — Scribe',
     icon: path.resolve(__dirname, '../../assets/icon.png'),
+    // Hide the OS menu bar (File/Edit/Help) — it duplicated Scribe's own ribbon
+    // tabs and confused the layout. The native window controls stay.
+    autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
     },
   });
-  mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
+  const win = mainWindow;
+  win.setMenuBarVisibility(false);
+  win.maximize(); // open filling the screen rather than the default window size
+  win.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
 
   // Never lose work silently: closing with unsaved changes asks first.
-  mainWindow.on('close', event => {
+  win.on('close', event => {
     if (!isDirty) return;
-    const choice = dialog.showMessageBoxSync(mainWindow, {
+    const choice = dialog.showMessageBoxSync(win, {
       type: 'warning',
       buttons: ['Discard Changes', 'Cancel'],
       defaultId: 1,
@@ -73,6 +81,8 @@ const createWindow = (): void => {
     });
     if (choice === 1) event.preventDefault();
   });
+
+  win.on('closed', () => { mainWindow = null; });
 };
 
 // --- Writers (one per export format) ---
@@ -106,15 +116,21 @@ const writeDocx = async (filePath: string, content: SlateContent): Promise<void>
 };
 
 const writeViaPandoc = async (filePath: string, content: SlateContent): Promise<void> => {
-  const html = generateHtmlString(content);
+  const ext = path.extname(filePath).toLowerCase();
+  const format = ext.slice(1); // 'odt' | 'rtf'
+  const html = generateHtmlString(content, path.basename(filePath, ext));
   const tempPath = path.join(app.getPath('temp'), `scribe-export-${Date.now()}.html`);
-  fs.writeFileSync(tempPath, html);
+  fs.writeFileSync(tempPath, html, 'utf-8');
   try {
-    await execPromise(`pandoc "${tempPath}" -o "${filePath}"`);
+    // --standalone is REQUIRED for RTF (without it Pandoc emits a header-less
+    // fragment that opens as a blank file) and harmless for ODT. Input format is
+    // auto-detected from the .html temp file.
+    await execPromise(`pandoc "${tempPath}" -t ${format} --standalone -o "${filePath}"`);
   } catch (error) {
+    const message = (error as Error & { stderr?: string }).stderr || (error as Error).message;
     throw new Error(
-      `Exporting to ${path.extname(filePath)} requires Pandoc to be installed (https://pandoc.org). ` +
-        `Original error: ${(error as Error).message}`
+      `Exporting to ${path.extname(filePath)} failed. Pandoc must be installed (https://pandoc.org). ` +
+        `Details: ${message}`
     );
   } finally {
     if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
@@ -200,9 +216,10 @@ ipcMain.handle('open-file', async event => {
       title: 'Open Document',
       properties: ['openFile'],
       filters: [
-        { name: 'All Supported', extensions: ['scribe', 'json', 'docx', 'odt', 'epub', 'tex', 'rtf', 'txt', 'md', 'html'] },
+        { name: 'All Supported', extensions: ['scribe', 'json', 'docx', 'pdf', 'odt', 'epub', 'tex', 'rtf', 'txt', 'md', 'html'] },
         { name: 'Scribe Native Document', extensions: ['scribe'] },
         { name: 'Word Documents', extensions: ['docx'] },
+        { name: 'PDF (text, beta)', extensions: ['pdf'] },
         { name: 'OpenDocument Text', extensions: ['odt'] },
         { name: 'eBooks', extensions: ['epub'] },
         { name: 'LaTeX', extensions: ['tex'] },
@@ -240,6 +257,10 @@ ipcMain.handle('open-file', async event => {
         break;
       case '.docx':
         content = await parseDocxToSlate(fs.readFileSync(filePath));
+        fileType = 'slate';
+        break;
+      case '.pdf':
+        content = await parsePdfToSlate(fs.readFileSync(filePath));
         fileType = 'slate';
         break;
       case '.odt':
@@ -350,17 +371,101 @@ ipcMain.handle('open-image-dialog', async event => {
   }
 });
 
+// --- App info (version/platform, surfaced in the contact form + About) ---
+ipcMain.handle('get-app-info', () => ({
+  version: app.getVersion(),
+  platform: process.platform,
+  arch: process.arch,
+  electron: process.versions.electron,
+}));
+
+// --- Auto-update ---------------------------------------------------------
+// Uses Electron's built-in Squirrel updater pointed at the free
+// update.electronjs.org service. It serves signed macOS/Windows builds from
+// your public GitHub Releases, so updates land automatically on launch once
+// you publish a release (see forge.config GitHub publisher).
+//
+// REQUIRED ONE-TIME SETUP: set UPDATE_REPO to "owner/repo" of your public
+// GitHub repository. Until then (and in unpackaged dev) auto-update is a no-op.
+const UPDATE_REPO = 'Gus-Jacobs/Scribe';
+
+const sendUpdateStatus = (status: string, detail?: string): void => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-status', { status, detail });
+  }
+};
+
+let updaterReady = false;
+
+const setupAutoUpdates = (): void => {
+  // Squirrel updater only works in a packaged, code-signed build with a feed.
+  if (!app.isPackaged || !UPDATE_REPO) return;
+  try {
+    const feedUrl = `https://update.electronjs.org/${UPDATE_REPO}/${process.platform}-${process.arch}/${app.getVersion()}`;
+    autoUpdater.setFeedURL({ url: feedUrl });
+    updaterReady = true;
+
+    autoUpdater.on('checking-for-update', () => sendUpdateStatus('checking'));
+    autoUpdater.on('update-not-available', () => sendUpdateStatus('none'));
+    autoUpdater.on('update-available', () => sendUpdateStatus('available'));
+    autoUpdater.on('update-downloaded', (_e, _notes, name) => sendUpdateStatus('downloaded', name));
+    autoUpdater.on('error', err => {
+      console.error('autoUpdater error:', err);
+      sendUpdateStatus('error', err.message);
+    });
+
+    // Check on boot, then every 6 hours while running.
+    autoUpdater.checkForUpdates();
+    setInterval(() => autoUpdater.checkForUpdates(), 6 * 60 * 60 * 1000);
+  } catch (error) {
+    console.error('Failed to initialize auto-updates:', error);
+  }
+};
+
+// Manual "Check for updates" from the UI.
+ipcMain.handle('check-for-updates', () => {
+  if (!app.isPackaged) return { supported: false, reason: 'dev' };
+  if (!updaterReady) return { supported: false, reason: 'unconfigured' };
+  try {
+    autoUpdater.checkForUpdates();
+    return { supported: true };
+  } catch (error) {
+    return { supported: false, reason: (error as Error).message };
+  }
+});
+
+// Restart and apply a downloaded update.
+ipcMain.handle('restart-to-update', () => {
+  if (updaterReady) autoUpdater.quitAndInstall();
+  return { success: true };
+});
+
 // --- App lifecycle ---
 app.on('ready', () => {
-  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Content-Security-Policy': ["script-src 'self' 'unsafe-inline' 'unsafe-eval'; img-src 'self' data:"],
-      },
+  // Drop the default application menu entirely (File/Edit/View/Window/Help).
+  Menu.setApplicationMenu(null);
+
+  // Strict CSP for the shipped app. In dev the webpack plugin's permissive
+  // devContentSecurityPolicy applies instead (so HMR's websocket isn't blocked).
+  if (app.isPackaged) {
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          // connect-src allows the contact form (Formspree) and the update feed.
+          'Content-Security-Policy': [
+            "default-src 'self'; " +
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+              "style-src 'self' 'unsafe-inline'; " +
+              "img-src 'self' data:; " +
+              "connect-src 'self' https://formspree.io https://update.electronjs.org",
+          ],
+        },
+      });
     });
-  });
+  }
   createWindow();
+  setupAutoUpdates();
 });
 
 app.on('window-all-closed', () => {

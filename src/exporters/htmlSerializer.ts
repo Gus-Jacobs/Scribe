@@ -54,6 +54,24 @@ export const escapeHtml = (value: string): string =>
 
 const isText = (node: SlateNode): node is CustomText => (node as CustomText).text !== undefined;
 
+/**
+ * White is the editor's dark-mode default text/highlight color. When a user
+ * reverts colored text back to "white" the mark sticks around and then prints
+ * as invisible (or grey) on the white page of every export target. Treat white
+ * as "no explicit color" so reverting cleanly drops the style everywhere
+ * (DOCX, PDF, HTML, Pandoc).
+ */
+const isDefaultWhite = (color: string): boolean => {
+  const v = color.trim().toLowerCase().replace(/\s+/g, '');
+  return (
+    v === '#fff' ||
+    v === '#ffffff' ||
+    v === 'white' ||
+    v === 'rgb(255,255,255)' ||
+    v === 'rgba(255,255,255,1)'
+  );
+};
+
 const cssSize = (value: string | number | undefined): string | undefined => {
   if (value === undefined || value === '' || value === 'auto') return undefined;
   return typeof value === 'number' ? `${value}px` : value;
@@ -71,9 +89,13 @@ const serializeText = (node: CustomText): string => {
   if (node.code) text = `<code style="font-family: 'Courier New', monospace;">${text}</code>`;
 
   let style = '';
-  if (node.color) style += `color: ${node.color};`;
-  if (node.backgroundColor) style += `background-color: ${node.backgroundColor};`;
-  if (node.fontSize) style += `font-size: ${node.fontSize}px;`;
+  if (node.color && !isDefaultWhite(node.color)) style += `color: ${node.color};`;
+  if (node.backgroundColor && !isDefaultWhite(node.backgroundColor)) {
+    style += `background-color: ${node.backgroundColor};`;
+  }
+  // Sizes are stored as points; emit pt so Word/Pandoc keep the exact size
+  // instead of treating it as px and shrinking it (72 → 54pt).
+  if (node.fontSize) style += `font-size: ${node.fontSize}pt;`;
   if (node.fontFamily) style += `font-family: '${node.fontFamily}';`;
 
   return style ? `<span style="${escapeHtml(style)}">${text}</span>` : text;
@@ -158,13 +180,29 @@ const serializeNode = (
     case 'heading-three':
       return `<h3${styleAttr}>${children()}</h3>`;
     case 'block-quote':
-      return `<blockquote style="border-left: 4px solid #cccccc; margin-left: 0; padding-left: 16px; font-style: italic;">${children()}</blockquote>`;
+      // Explicit shading + a real serif/sans font so Word/Pandoc render a
+      // standard indented quote, never a monospace "code" block.
+      return `<blockquote style="border-left: 4px solid #cccccc; margin-left: 0; padding: 8px 16px; background-color: #f3f4f6; font-style: italic; font-family: 'Calibri', Arial, sans-serif;">${children()}</blockquote>`;
     case 'bulleted-list':
       return `<ul${styleAttr}>${children()}</ul>`;
     case 'numbered-list':
       return `<ol${styleAttr}>${children()}</ol>`;
-    case 'list-item':
-      return `<li${styleAttr}>${children()}</li>`;
+    case 'list-item': {
+      // Flatten a wrapping paragraph (our list items often hold a paragraph)
+      // so html-to-docx sees `<li>text</li>` and keeps ordered vs. unordered
+      // numbering intact instead of collapsing everything to bullets.
+      const parts = (node.children as SlateNode[])
+        .map(child => {
+          if (!isText(child) && child.type === 'paragraph') {
+            return (child.children as SlateNode[])
+              .map(c => serializeNode(c, doc, opts, table, rowIndex))
+              .join('');
+          }
+          return serializeNode(child, doc, opts, table, rowIndex);
+        })
+        .join('');
+      return `<li${styleAttr}>${parts}</li>`;
+    }
     case 'link':
       return `<a href="${escapeHtml(node.url)}">${children()}</a>`;
     case 'image': {
@@ -177,15 +215,18 @@ const serializeNode = (
       if (height && height !== 'auto') style += `height: ${height};`;
       const alt = node.alt ? ` alt="${escapeHtml(node.alt)}"` : '';
       const styleAttrStr = style ? ` style="${escapeHtml(style)}"` : '';
-      return `<img src="${escapeHtml(node.url)}"${alt}${styleAttrStr} />`;
+      // Wrap in a paragraph: html-to-docx only embeds images that live inside a
+      // block, so a bare top-level <img> would silently vanish from the .docx.
+      return `<p style="text-align: center;"><img src="${escapeHtml(node.url)}"${alt}${styleAttrStr} /></p>`;
     }
     case 'horizontal-rule':
       return opts.docx
         ? `<p style="text-align: center;"><span style="color: #999999;">${HR_GLYPH_LINE}</span></p>`
         : '<hr />';
     case 'page-break':
-      // html-to-docx and printToPDF both honor this CSS page-break marker.
-      return '<div class="page-break" style="page-break-after: always;"></div>';
+      // html-to-docx and printToPDF both honor this CSS marker; `break-after`
+      // is the modern alias Chromium (PDF) prefers.
+      return '<div class="page-break" style="page-break-after: always; break-after: page;"></div>';
     case 'table': {
       const rows = node.children
         .map((row, i) => serializeNode(row, doc, opts, node, i))
@@ -236,7 +277,13 @@ export const generateHtmlString = (
   return (
     '<!DOCTYPE html><html><head><meta charset="utf-8">' +
     `<title>${escapeHtml(title)}</title>` +
-    '<style>body { font-family: Calibri, Arial, sans-serif; font-size: 12pt; }</style>' +
+    // Force a white page with black default text so PDF/ODT exports never
+    // inherit the editor's dark-mode inversion (white-on-white).
+    '<style>' +
+    'body { font-family: Calibri, Arial, sans-serif; font-size: 12pt; color: #000000; background: #ffffff; }' +
+    'img { max-width: 100%; }' +
+    'table { border-collapse: collapse; }' +
+    '</style>' +
     `</head><body>${body}</body></html>`
   );
 };
