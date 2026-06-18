@@ -2188,12 +2188,25 @@ const DonateButton = () => {
                 onMouseEnter={() => setExpanded(true)}
                 onMouseLeave={() => setExpanded(false)}
                 onClick={() => setShowModal(true)}
-                className="flex items-center rounded-full px-2 py-2 text-pink-600 dark:text-pink-400 bg-pink-500/10 hover:bg-pink-500/20 transition-colors"
+                className="relative flex items-center overflow-hidden rounded-full px-2 py-2 text-pink-600 dark:text-pink-400 bg-pink-500/10 hover:bg-pink-500/15 border border-pink-400/30 backdrop-blur-sm shadow-sm transition-colors"
             >
                 <DonateIcon />
-                <span className={`overflow-hidden whitespace-nowrap text-sm font-medium transition-all duration-300 ease-out ${expanded ? 'max-w-[72px] ml-1.5 opacity-100' : 'max-w-0 opacity-0'}`}>
-                    Donate
+                {/* grid 0fr -> 1fr animates to the label's natural width perfectly
+                    smoothly (no max-width snap, no margin jump). */}
+                <span className={`grid transition-[grid-template-columns] duration-500 ease-in-out ${expanded ? 'grid-cols-[1fr]' : 'grid-cols-[0fr]'}`}>
+                    <span className="overflow-hidden">
+                        <span className="block whitespace-nowrap pl-1.5 pr-0.5 text-sm font-medium">Donate</span>
+                    </span>
                 </span>
+                {/* glassy shine sweep, delayed so it fires once the pill is open */}
+                {expanded && (
+                    <span className="pointer-events-none absolute inset-0 overflow-hidden rounded-full">
+                        <span
+                            className="absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-white/55 to-transparent"
+                            style={{ animation: 'shine 850ms ease-in-out 360ms 1' }}
+                        />
+                    </span>
+                )}
             </button>
             {showModal && (
                 <Modal onClose={() => setShowModal(false)}>
