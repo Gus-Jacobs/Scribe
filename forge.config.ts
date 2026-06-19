@@ -52,6 +52,9 @@ const config: ForgeConfig = {
       // launch (your "seamless" goal). Flip to true if you'd rather review each
       // release on GitHub and click Publish manually before it goes live.
       draft: false,
+      // Don't auto-fill the release body from the commit log — write a real
+      // description on the GitHub release page instead.
+      generateReleaseNotes: false,
     }),
   ],
   plugins: [
