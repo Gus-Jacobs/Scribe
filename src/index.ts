@@ -53,7 +53,9 @@ const createWindow = (): void => {
     minWidth: 760,
     minHeight: 480,
     title: 'Untitled — Scribe',
-    icon: path.resolve(__dirname, '../../assets/icon.png'),
+    icon: app.isPackaged
+      ? path.join(process.resourcesPath, 'icon-square.png')
+      : path.resolve(__dirname, '../../assets/icon-square.png'),
     // Hide the OS menu bar (File/Edit/Help) — it duplicated Scribe's own ribbon
     // tabs and confused the layout. The native window controls stay.
     autoHideMenuBar: true,

@@ -16,7 +16,9 @@ const config: ForgeConfig = {
     // filesystem rather than from inside the asar archive.
     asar: { unpack: '**/node_modules/{pdf-parse,pdfjs-dist,@napi-rs}/**' },
     // Notice there is NO file extension — Forge detects icon.ico for Windows.
-    icon: './assets/icon'
+    icon: './assets/icon',
+    // Ship the square logo so the runtime window/taskbar icon can load it.
+    extraResource: ['./assets/icon-square.png'],
   },
   rebuildConfig: {},
   // The webpack plugin ships only the .webpack bundle, so node_modules is
